@@ -16,7 +16,7 @@ pub struct HashmapUserStore {
 }
 impl HashmapUserStore {
     pub fn add_user(&mut self, user: User) -> Result<(), UserStoreError> {
-        if let Some(_) = self.users.get(&user.email) {
+        if self.users.contains_key(&user.email) {
             return Err(UserStoreError::UserAlreadyExists);
         }
         self.users.insert(user.email.clone(), user);
