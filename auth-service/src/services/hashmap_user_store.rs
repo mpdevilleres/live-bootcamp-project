@@ -1,21 +1,14 @@
 use std::collections::HashMap;
-
+use crate::domain::data_stores::{UserStore, UserStoreError};
 use crate::domain::User;
-
-#[derive(Debug, PartialEq)]
-pub enum UserStoreError {
-    UserAlreadyExists,
-    UserNotFound,
-    InvalidCredentials,
-    UnexpectedError,
-}
 
 #[derive(Default)]
 pub struct HashmapUserStore {
-    users: HashMap<String, User>,
+    pub users: HashMap<String, User>,
 }
-impl HashmapUserStore {
-    pub fn add_user(&mut self, user: User) -> Result<(), UserStoreError> {
+#[async_trait::async_trait]
+impl UserStore for HashmapUserStore {
+    async fn add_user(&mut self, user: User) -> Result<(), UserStoreError> {
         if self.users.contains_key(&user.email) {
             return Err(UserStoreError::UserAlreadyExists);
         }
@@ -23,19 +16,24 @@ impl HashmapUserStore {
         Ok(())
     }
 
-    pub fn get_user(&self, email: &str) -> Result<User, UserStoreError> {
-        if let Some(existing_user) = self.users.get(email) {
-            return Ok(existing_user.clone());
+    async fn get_user(&self, email: &str) -> Result<User, UserStoreError> {
+        match self.users.get(email) {
+            Some(user) => Ok(user.clone()),
+            None => Err(UserStoreError::UserNotFound),
         }
-        Err(UserStoreError::UserNotFound)
     }
 
-    pub fn validate_user(&self, email: &str, password: &str) -> Result<(), UserStoreError> {
-        let user = self.get_user(email)?;
-        if user.password == password {
-            return Ok(());
+    async fn validate_user(&self, email: &str, password: &str) -> Result<(), UserStoreError> {
+        match self.users.get(email) {
+            Some(user) => {
+                if user.password.eq(password) {
+                    Ok(())
+                } else {
+                    Err(UserStoreError::InvalidCredentials)
+                }
+            }
+            None => Err(UserStoreError::UserNotFound),
         }
-        Err(UserStoreError::InvalidCredentials)
     }
 }
 
@@ -53,7 +51,7 @@ mod tests {
             password.clone(),
             false,
         );
-        let result = store.add_user(user.clone());
+        let result = store.add_user(user.clone()).await;
         assert!(result.is_ok());
         let new_user = store.users.get(&email);
         assert!(new_user.is_some());
@@ -64,17 +62,32 @@ mod tests {
         let mut store = HashmapUserStore::default();
         let email = "sample@domain.com".to_string();
         let password = "p@$$w0rd".to_string();
-        let user = User::new(
-            email.clone(),
-            password.clone(),
-            false,
-        );
-        let _ = store.add_user(user.clone());
+        // Why using new and using add_user syntax didn't work on this code
+        // error[E0308]: mismatched types
+        //   --> src/services/hashmap_user_store.rs:73:28
+        //    |
+        // 73 |         assert_eq!(result, Ok(user));
+        //    |                            ^^^^^^^^ expected `Result<User, UserStoreError>`, found `Result<Pin<Box<...>>, ...>`
 
-        let result = store.get_user(&email);
-        assert!(result.is_ok());
-        let result = store.get_user("wrong@domain.com");
-        assert!(result.is_err());
+        // previous implementation
+        // let user = User::new(
+        //     email.clone(),
+        //     password.clone(),
+        //     false,
+        // );
+        // let _ = store.add_user(user.clone());
+
+        let user = User {
+            email: email.clone(),
+            password: password.clone(),
+            requires_2fa: false,
+        };
+        store.users.insert(email.clone(), user.clone());
+
+        let result = store.get_user(&email).await;
+        assert_eq!(result, Ok(user));
+        let result = store.get_user("wrong@domain.com").await;
+        assert_eq!(result, Err(UserStoreError::UserNotFound));
     }
 
     #[tokio::test]
@@ -82,15 +95,16 @@ mod tests {
         let mut store = HashmapUserStore::default();
         let email = "sample@domain.com".to_string();
         let password = "p@$$w0rd".to_string();
-        let user = User::new(
-            email.clone(),
-            password.clone(),
-            false,
-        );
-        let _ = store.add_user(user.clone());
-        let result = store.validate_user(&email, &password);
-        assert!(result.is_ok());
-        let result = store.validate_user(&email, "wrong password");
-        assert!(result.is_err());
+        let user = User {
+            email: email.clone(),
+            password: password.clone(),
+            requires_2fa: false,
+        };
+        store.users.insert(email.clone(), user.clone());
+
+        let result = store.validate_user(&email, &password).await;
+        assert_eq!(result, Ok(()));
+        let result = store.validate_user(&email, "wrong password").await;
+        assert_eq!(result, Err(UserStoreError::InvalidCredentials));
     }
 }

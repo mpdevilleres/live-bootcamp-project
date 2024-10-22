@@ -22,12 +22,14 @@ pub async fn post_signup(
     let mut user_store = state.user_store.write().await;
     let user = User::new(email, password, request.requires_2fa);
 
-    if  user_store.get_user(&user.email).is_ok() {
+    if  user_store.get_user(&user.email).await.is_ok() {
         return Err(AuthAPIError::UserAlreadyExists)
     }
 
 
-    user_store.add_user(user).unwrap();
+    if user_store.add_user(user).await.is_err() {
+        return Err(AuthAPIError::UnexpectedError);
+    }
 
     let response = Json(SignupResponse {
         message: "User created successfully!".to_string(),
